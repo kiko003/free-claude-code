@@ -44,6 +44,7 @@ Free Claude Code routes Anthropic Messages API traffic from Claude Code to NVIDI
 - Optional Discord or Telegram bot wrapper for remote coding sessions.
 - Optional Usage through the VSCode extension.
 - Optional voice-note transcription through local Whisper or NVIDIA NIM.
+- OpenRouter multi-key rotation: comma-separated API keys with automatic load-balancing, per-key daily quota tracking, and graduated rate-limit backoff.
 - Local **Admin UI** at `/admin` to edit supported proxy settings, validate changes, and check providers (loopback access only).
 
 ## Quick Start
@@ -169,7 +170,25 @@ This provider uses Wafer's Anthropic-compatible endpoint at `https://pass.wafer.
 
 Get a key at [openrouter.ai/keys](https://openrouter.ai/keys).
 
-In the Admin UI, paste it into `OPENROUTER_API_KEY`, then set `MODEL` to an OpenRouter slug such as `open_router/stepfun/step-3.5-flash:free`.
+**Single key:** In the Admin UI, paste it into `OPENROUTER_API_KEY`, then set `MODEL` to an OpenRouter slug such as `open_router/stepfun/step-3.5-flash:free`.
+
+**Multi-key rotation:** Enter comma-separated keys in `OPENROUTER_API_KEY` to enable automatic key rotation. The proxy load-balances across keys with quota-aware selection, preferring the key with the most remaining daily quota. When a key hits a rate limit or quota exhaustion, the proxy automatically rotates to the next available key.
+
+```dotenv
+# Comma-separated keys — comma presence activates rotation
+OPENROUTER_API_KEY="sk-or-v1-abc,sk-or-v1-def,sk-or-v1-ghi"
+
+# Optional per-key daily limit (free keys get 20 requests/day by default)
+OPENROUTER_API_KEY="sk-or-v1-abc:50,sk-or-v1-def:1000,sk-or-v1-ghi"
+```
+
+Features:
+
+- **Quota-aware selection** — picks the key with the highest remaining daily quota percentage.
+- **Graduated backoff** — ~10 s for RPM limits, ~30 s for upstream errors, until-midnight for daily quota, 5 min for payment errors (402).
+- **Transparent retry** — on 429 or 402, the proxy automatically rotates to the next key without the client seeing an error.
+- **Timezone-aware reset** — daily quotas reset at midnight in the configured `OPENROUTER_TIMEZONE` (default `UTC`).
+- **Key-status endpoint** — check current key health at `GET /v1/openrouter/key-status` (requires auth token).
 
 Browse [all models](https://openrouter.ai/models) or [free models](https://openrouter.ai/collections/free-models).
 
@@ -403,6 +422,13 @@ ZAI_API_KEY=""
 LM_STUDIO_BASE_URL="http://localhost:1234/v1"
 LLAMACPP_BASE_URL="http://localhost:8080/v1"
 OLLAMA_BASE_URL="http://localhost:11434"
+```
+
+OpenRouter multi-key rotation is enabled by entering comma-separated keys (with optional `:daily_limit` suffixes) in `OPENROUTER_API_KEY`. Daily quota resets at midnight in the configured timezone:
+
+```dotenv
+OPENROUTER_API_KEY="sk-or-v1-abc:50,sk-or-v1-def:1000,sk-or-v1-ghi"
+OPENROUTER_TIMEZONE="UTC"
 ```
 
 Proxy settings are per provider:

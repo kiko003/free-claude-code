@@ -38,10 +38,10 @@ def _create_nvidia_nim(config: ProviderConfig, settings: Settings) -> BaseProvid
     return NvidiaNimProvider(config, nim_settings=settings.nim)
 
 
-def _create_open_router(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_open_router(config: ProviderConfig, settings: Settings) -> BaseProvider:
     from providers.open_router import OpenRouterProvider
 
-    return OpenRouterProvider(config)
+    return OpenRouterProvider(config, timezone=settings.open_router_timezone)
 
 
 def _create_deepseek(config: ProviderConfig, _settings: Settings) -> BaseProvider:

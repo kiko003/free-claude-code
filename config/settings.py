@@ -108,6 +108,9 @@ class Settings(BaseSettings):
 
     # ==================== OpenRouter Config ====================
     open_router_api_key: str = Field(default="", validation_alias="OPENROUTER_API_KEY")
+    open_router_timezone: str = Field(
+        default="UTC", validation_alias="OPENROUTER_TIMEZONE"
+    )
 
     # ==================== DeepSeek Config ====================
     deepseek_api_key: str = Field(default="", validation_alias="DEEPSEEK_API_KEY")

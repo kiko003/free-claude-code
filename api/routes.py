@@ -6,6 +6,7 @@ from loguru import logger
 from config.settings import Settings
 from core.anthropic import get_token_count
 from core.trace import trace_event
+from providers.base import BaseProvider
 from providers.registry import ProviderRegistry
 
 from . import dependencies
@@ -260,3 +261,37 @@ async def stop_cli(request: Request, _auth=Depends(require_api_key)):
     )
     logger.info("STOP_CLI: source=handler cancelled_count={}", count)
     return {"status": "stopped", "cancelled_count": count}
+
+
+@router.get("/v1/openrouter/key-status")
+async def key_status(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    _auth=Depends(require_api_key),
+):
+    """Return OpenRouter key rotation status (masked keys, quotas, blocks)."""
+    return get_openrouter_key_status(
+        provider=_try_get_openrouter_provider(request, settings)
+    )
+
+
+def get_openrouter_key_status(provider: BaseProvider | None) -> dict:
+    """Return key-status payload; empty list if no key manager."""
+    if provider is None:
+        return {"keys": [], "next_reset_at": None}
+    key_manager = getattr(provider, "_key_manager", None)
+    if key_manager is None:
+        return {"keys": [], "next_reset_at": None}
+    return key_manager.get_status_summary()
+
+
+def _try_get_openrouter_provider(
+    request: Request, settings: Settings
+) -> BaseProvider | None:
+    """Attempt to get the OpenRouter provider; return None on any failure."""
+    try:
+        return dependencies.resolve_provider(
+            "open_router", app=request.app, settings=settings
+        )
+    except Exception:
+        return None
