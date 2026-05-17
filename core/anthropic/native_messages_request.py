@@ -48,6 +48,7 @@ _OPENROUTER_EXTRA_BODY_FORBIDDEN_KEYS = frozenset(
         "context_management",
         "output_config",
         "mcp_servers",
+        "user",
     }
 )
 

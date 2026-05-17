@@ -110,10 +110,13 @@ class OpenRouterProvider(AnthropicMessagesTransport):
             self._current_key = key_state
 
         if self._key_manager is not None and self._current_key is not None:
-            body.setdefault(
-                "user",
-                hashlib.sha256(self._current_key.api_key.encode()).hexdigest(),
-            )
+            per_key_user = hashlib.sha256(
+                self._current_key.api_key.encode()
+            ).hexdigest()
+            body["user"] = per_key_user
+            metadata = body.setdefault("metadata", {})
+            if isinstance(metadata, dict):
+                metadata["user_id"] = per_key_user
 
         request = self._client.build_request(
             "POST",
