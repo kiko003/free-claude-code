@@ -62,7 +62,7 @@ class ChatCompletionRequest(BaseModel):
     temperature: float | None = None
     top_p: float | None = None
     stop: str | list[str] | None = None
-    stream: bool | None = True
+    stream: bool | None = False
     tools: list[OpenAITool] | None = None
     tool_choice: str | OpenAIToolChoice | None = None
     n: int | None = 1
@@ -77,7 +77,7 @@ class CompletionRequest(BaseModel):
     temperature: float | None = None
     top_p: float | None = None
     stop: str | list[str] | None = None
-    stream: bool | None = True
+    stream: bool | None = False
     n: int | None = 1
     suffix: str | None = None
     echo: bool | None = None

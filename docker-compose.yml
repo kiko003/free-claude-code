@@ -1,7 +1,7 @@
 services:
     free-claude-code:
         #build: .
-        image: free-claude-code:open  # latest - for legacy // Open - for keyrouter
+        image: free-claude-code:latest
         container_name: free-claude-code
         ports:
             - "8086:8082"
