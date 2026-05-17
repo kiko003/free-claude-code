@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
@@ -107,6 +108,12 @@ class OpenRouterProvider(AnthropicMessagesTransport):
             if key_state is None:
                 raise AllKeysExhaustedError()
             self._current_key = key_state
+
+        if self._key_manager is not None and self._current_key is not None:
+            body.setdefault(
+                "user",
+                hashlib.sha256(self._current_key.api_key.encode()).hexdigest(),
+            )
 
         request = self._client.build_request(
             "POST",
