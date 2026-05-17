@@ -311,7 +311,7 @@ class OpenAIProxyService:
         self._model_router = model_router or ModelRouter(settings)
         self._token_counter = token_counter
 
-    def create_chat_completion(
+    async def create_chat_completion(
         self, request_data: ChatCompletionRequest
     ) -> StreamingResponse | dict[str, Any]:
         """Handle an OpenAI /chat/completions request."""
@@ -383,7 +383,7 @@ class OpenAIProxyService:
                 )
 
                 if request_data.stream is False:
-                    return self._collect_non_stream(
+                    return await self._collect_non_stream(
                         openai_stream, resolved, input_tokens, request_id
                     )
 

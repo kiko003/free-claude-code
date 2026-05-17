@@ -218,7 +218,7 @@ async def create_chat_completion(
     _auth=Depends(require_api_key),
 ):
     """Create a chat completion (OpenAI-compatible)."""
-    return service.create_chat_completion(request_data)
+    return await service.create_chat_completion(request_data)
 
 
 @router.api_route("/v1/chat/completions", methods=["HEAD", "OPTIONS"])
