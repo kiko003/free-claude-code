@@ -5,9 +5,6 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from core.anthropic.sse import format_sse_event
-
-
 OPENAI_SSE_RESPONSE_HEADERS: dict[str, str] = {
     "X-Accel-Buffering": "no",
     "Cache-Control": "no-cache",
@@ -110,7 +107,7 @@ def _parse_anthropic_sse_event(chunk: str) -> tuple[str, dict[str, Any]] | None:
         elif line.startswith("data: "):
             try:
                 data = json.loads(line[6:])
-            except (json.JSONDecodeError, ValueError):
+            except json.JSONDecodeError, ValueError:
                 return None
     if data is None:
         return None
@@ -208,9 +205,7 @@ class _OpenAIStreamConverter:
                         self._tool_calls[idx]["function"]["arguments"] = (
                             self._tool_call_buffers[idx]
                         )
-                        yield self._openai_chunk(
-                            tool_calls=[self._tool_calls[idx]]
-                        )
+                        yield self._openai_chunk(tool_calls=[self._tool_calls[idx]])
 
             elif event_type == "message_delta":
                 delta = data.get("delta", {})

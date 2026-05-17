@@ -1,6 +1,5 @@
 """Tests for the OpenAI-compatible /v1/chat/completions endpoint."""
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,31 +16,31 @@ mock_provider = MagicMock(spec=NvidiaNimProvider)
 async def _mock_stream_response(*args, **kwargs):
     """Return a minimal Anthropic SSE stream."""
     yield (
-        'event: message_start\n'
+        "event: message_start\n"
         'data: {"type": "message_start", "message": {"id": "msg_test123", "type": "message", '
         '"role": "assistant", "content": [], "model": "test-model", "stop_reason": null, '
         '"stop_sequence": null, "usage": {"input_tokens": 5, "output_tokens": 1}}}\n\n'
     )
     yield (
-        'event: content_block_start\n'
+        "event: content_block_start\n"
         'data: {"type": "content_block_start", "index": 0, '
         '"content_block": {"type": "text", "text": ""}}\n\n'
     )
     yield (
-        'event: content_block_delta\n'
+        "event: content_block_delta\n"
         'data: {"type": "content_block_delta", "index": 0, '
         '"delta": {"type": "text_delta", "text": "Hello"}}\n\n'
     )
     yield (
-        'event: content_block_stop\n'
+        "event: content_block_stop\n"
         'data: {"type": "content_block_stop", "index": 0}\n\n'
     )
     yield (
-        'event: message_delta\n'
+        "event: message_delta\n"
         'data: {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": null}, '
         '"usage": {"input_tokens": 5, "output_tokens": 10}}\n\n'
     )
-    yield 'event: message_stop\n' 'data: {"type": "message_stop"}\n\n'
+    yield 'event: message_stop\ndata: {"type": "message_stop"}\n\n'
 
 
 mock_provider.stream_response = _mock_stream_response
@@ -73,6 +72,7 @@ def _chat_payload(**kwargs) -> dict:
 # =============================================================================
 # Streaming tests
 # =============================================================================
+
 
 def test_streaming_returns_200_with_text_event_stream(client: TestClient):
     response = client.post(
@@ -110,6 +110,7 @@ def test_streaming_contains_content(client: TestClient):
 # =============================================================================
 # Non-streaming tests
 # =============================================================================
+
 
 def test_non_streaming_returns_200_json(client: TestClient):
     response = client.post(
@@ -155,6 +156,7 @@ def test_non_streaming_contains_content(client: TestClient):
 # Model routing
 # =============================================================================
 
+
 def test_model_routing_with_provider_prefix(client: TestClient):
     """Provider-prefixed model names route to the correct provider."""
     response = client.post(
@@ -170,35 +172,36 @@ def test_model_routing_with_provider_prefix(client: TestClient):
 # Tool calls
 # =============================================================================
 
+
 async def _mock_stream_with_tool_call(*args, **kwargs):
     """Return an Anthropic SSE stream with a tool_use block."""
     yield (
-        'event: message_start\n'
+        "event: message_start\n"
         'data: {"type": "message_start", "message": {"id": "msg_tool123", "type": "message", '
         '"role": "assistant", "content": [], "model": "test-model", "stop_reason": null, '
         '"stop_sequence": null, "usage": {"input_tokens": 10, "output_tokens": 1}}}\n\n'
     )
     yield (
-        'event: content_block_start\n'
+        "event: content_block_start\n"
         'data: {"type": "content_block_start", "index": 0, '
         '"content_block": {"type": "tool_use", "id": "toolu_abc123", '
         '"name": "get_weather", "input": {}}}\n\n'
     )
     yield (
-        'event: content_block_delta\n'
+        "event: content_block_delta\n"
         'data: {"type": "content_block_delta", "index": 0, '
         '"delta": {"type": "input_json_delta", "partial_json": "{\\"city\\": \\"NYC\\"}"}}\n\n'
     )
     yield (
-        'event: content_block_stop\n'
+        "event: content_block_stop\n"
         'data: {"type": "content_block_stop", "index": 0}\n\n'
     )
     yield (
-        'event: message_delta\n'
+        "event: message_delta\n"
         'data: {"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": null}, '
         '"usage": {"input_tokens": 10, "output_tokens": 20}}\n\n'
     )
-    yield 'event: message_stop\n' 'data: {"type": "message_stop"}\n\n'
+    yield 'event: message_stop\ndata: {"type": "message_stop"}\n\n'
 
 
 def test_tool_calls_converted_to_openai_format(client: TestClient):
@@ -207,14 +210,19 @@ def test_tool_calls_converted_to_openai_format(client: TestClient):
         "/v1/chat/completions",
         json=_chat_payload(
             stream=False,
-            tools=[{
-                "type": "function",
-                "function": {
-                    "name": "get_weather",
-                    "description": "Get weather",
-                    "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
-                },
-            }],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "description": "Get weather",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"city": {"type": "string"}},
+                        },
+                    },
+                }
+            ],
         ),
     )
     assert response.status_code == 200
@@ -230,6 +238,7 @@ def test_tool_calls_converted_to_openai_format(client: TestClient):
 # =============================================================================
 # Probes and auth
 # =============================================================================
+
 
 def test_head_probe_returns_204(client: TestClient):
     response = client.head("/v1/chat/completions")
@@ -272,6 +281,7 @@ def test_auth_required():
 # =============================================================================
 # Error handling
 # =============================================================================
+
 
 def test_empty_messages_returns_error(client: TestClient):
     response = client.post(

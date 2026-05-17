@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
+from api.model_router import ModelRouter
 from api.models.anthropic import (
     ContentBlockText,
     ContentBlockToolResult,
@@ -20,16 +21,14 @@ from api.models.anthropic import (
     MessagesRequest,
     SystemContent,
     Tool,
-    ThinkingConfig,
 )
 from api.models.openai import (
     ChatCompletionRequest,
     OpenAIContentPart,
     OpenAIMessage,
-    OpenAITool,
     OpenAIToolChoice,
 )
-from api.model_router import ModelRouter
+from config.settings import Settings
 from core.anthropic import get_token_count, get_user_facing_error_message
 from core.anthropic.openai_sse import (
     OPENAI_SSE_RESPONSE_HEADERS,
@@ -37,7 +36,6 @@ from core.anthropic.openai_sse import (
     convert_anthropic_sse_to_openai_stream,
 )
 from core.trace import trace_event, traced_async_stream
-from config.settings import Settings
 from providers.base import BaseProvider
 from providers.exceptions import InvalidRequestError, ProviderError
 
@@ -117,11 +115,13 @@ def _convert_openai_message(msg: OpenAIMessage) -> Message:
             if isinstance(part, OpenAIContentPart):
                 if part.type == "text" and part.text:
                     blocks.append(ContentBlockText(type="text", text=part.text))
-            elif isinstance(part, dict):
-                if part.get("type") == "text":
-                    blocks.append(ContentBlockText(type="text", text=part.get("text", "")))
+            elif isinstance(part, dict) and part.get("type") == "text":
+                blocks.append(
+                    ContentBlockText(type="text", text=part.get("text", ""))
+                )
         if not blocks:
-            blocks.append(ContentBlockText(type="text", text=content or ""))
+            fallback = content if isinstance(content, str) else ""
+            blocks.append(ContentBlockText(type="text", text=fallback))
         return Message(role=role, content=blocks)
 
     return Message(role=role, content=content or "")
@@ -135,8 +135,10 @@ def _convert_openai_tool_calls(msg: OpenAIMessage) -> list[Any]:
     for tc in msg.tool_calls:
         if tc.function:
             try:
-                arguments = json.loads(tc.function.arguments) if tc.function.arguments else {}
-            except (json.JSONDecodeError, TypeError):
+                arguments = (
+                    json.loads(tc.function.arguments) if tc.function.arguments else {}
+                )
+            except json.JSONDecodeError, TypeError:
                 arguments = {}
             blocks.append(
                 ContentBlockToolUse(
@@ -160,12 +162,16 @@ def _convert_openai_messages(req: ChatCompletionRequest) -> list[Message]:
             content_blocks: list[Any] = []
             if msg.content:
                 if isinstance(msg.content, str) and msg.content:
-                    content_blocks.append(ContentBlockText(type="text", text=msg.content))
+                    content_blocks.append(
+                        ContentBlockText(type="text", text=msg.content)
+                    )
                 elif isinstance(msg.content, list):
                     for part in msg.content:
                         if isinstance(part, OpenAIContentPart):
                             if part.type == "text" and part.text:
-                                content_blocks.append(ContentBlockText(type="text", text=part.text))
+                                content_blocks.append(
+                                    ContentBlockText(type="text", text=part.text)
+                                )
                         elif isinstance(part, dict) and part.get("type") == "text":
                             content_blocks.append(
                                 ContentBlockText(type="text", text=part.get("text", ""))
@@ -193,16 +199,14 @@ def _convert_openai_tools(req: ChatCompletionRequest) -> list[Tool] | None:
     """Convert OpenAI tools to Anthropic Tool list."""
     if not req.tools:
         return None
-    result: list[Tool] = []
-    for t in req.tools:
-        result.append(
-            Tool(
-                name=t.function.name,
-                description=t.function.description,
-                parameters=t.function.parameters,
-            )
+    return [
+        Tool(
+            name=t.function.name,
+            description=t.function.description,
+            input_schema=t.function.parameters,
         )
-    return result
+        for t in req.tools
+    ]
 
 
 def _convert_openai_tool_choice(req: ChatCompletionRequest) -> dict[str, Any] | None:
@@ -217,9 +221,8 @@ def _convert_openai_tool_choice(req: ChatCompletionRequest) -> dict[str, Any] | 
         if req.tool_choice == "required":
             return {"type": "any"}
         return None
-    if isinstance(req.tool_choice, OpenAIToolChoice):
-        if req.tool_choice.type == "function" and req.tool_choice.function:
-            return {"type": "tool", "name": req.tool_choice.function.get("name", "")}
+    if isinstance(req.tool_choice, OpenAIToolChoice) and req.tool_choice.type == "function" and req.tool_choice.function:
+        return {"type": "tool", "name": req.tool_choice.function.get("name", "")}
     return None
 
 
@@ -232,7 +235,9 @@ def _convert_openai_stop(req: ChatCompletionRequest) -> list[str] | None:
     return req.stop
 
 
-def _extract_system_messages(req: ChatCompletionRequest) -> str | list[SystemContent] | None:
+def _extract_system_messages(
+    req: ChatCompletionRequest,
+) -> str | list[SystemContent] | None:
     """Extract system messages from OpenAI messages list."""
     system_parts: list[str] = []
     for msg in req.messages:
@@ -424,7 +429,7 @@ class OpenAIProxyService:
                     continue
                 try:
                     data = json.loads(payload)
-                except (json.JSONDecodeError, ValueError):
+                except json.JSONDecodeError, ValueError:
                     continue
                 if not message_id:
                     message_id = data.get("id", "")
@@ -432,17 +437,19 @@ class OpenAIProxyService:
                 if choices:
                     choice = choices[0]
                     delta = choice.get("delta", {})
-                    if "content" in delta and delta["content"]:
+                    if delta.get("content"):
                         content_parts.append(delta["content"])
                     if "tool_calls" in delta:
                         for tc in delta["tool_calls"]:
                             idx = tc.get("index", 0)
                             while len(tool_calls) <= idx:
-                                tool_calls.append({
-                                    "id": "",
-                                    "type": "function",
-                                    "function": {"name": "", "arguments": ""},
-                                })
+                                tool_calls.append(
+                                    {
+                                        "id": "",
+                                        "type": "function",
+                                        "function": {"name": "", "arguments": ""},
+                                    }
+                                )
                             if tc.get("id"):
                                 tool_calls[idx]["id"] = tc["id"]
                             if tc.get("type"):
@@ -451,7 +458,9 @@ class OpenAIProxyService:
                             if fn.get("name"):
                                 tool_calls[idx]["function"]["name"] = fn["name"]
                             if fn.get("arguments"):
-                                tool_calls[idx]["function"]["arguments"] += fn["arguments"]
+                                tool_calls[idx]["function"]["arguments"] += fn[
+                                    "arguments"
+                                ]
                     fr = choice.get("finish_reason")
                     if fr:
                         finish_reason = fr
