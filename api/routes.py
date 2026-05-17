@@ -13,7 +13,9 @@ from . import dependencies
 from .dependencies import get_settings, require_api_key
 from .gateway_model_ids import gateway_model_id, no_thinking_gateway_model_id
 from .models.anthropic import MessagesRequest, TokenCountRequest
+from .models.openai import ChatCompletionRequest
 from .models.responses import ModelResponse, ModelsListResponse
+from .openai_service import OpenAIProxyService
 from .services import ClaudeProxyService
 
 router = APIRouter()
@@ -193,6 +195,35 @@ async def count_tokens(
 @router.api_route("/v1/messages/count_tokens", methods=["HEAD", "OPTIONS"])
 async def probe_count_tokens(_auth=Depends(require_api_key)):
     """Respond to Claude compatibility probes for the token count endpoint."""
+    return _probe_response("POST, HEAD, OPTIONS")
+
+
+def get_openai_service(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> OpenAIProxyService:
+    """Build the OpenAI service for route handlers."""
+    return OpenAIProxyService(
+        settings,
+        provider_getter=lambda provider_type: dependencies.resolve_provider(
+            provider_type, app=request.app, settings=settings
+        ),
+    )
+
+
+@router.post("/v1/chat/completions")
+async def create_chat_completion(
+    request_data: ChatCompletionRequest,
+    service: OpenAIProxyService = Depends(get_openai_service),
+    _auth=Depends(require_api_key),
+):
+    """Create a chat completion (OpenAI-compatible)."""
+    return service.create_chat_completion(request_data)
+
+
+@router.api_route("/v1/chat/completions", methods=["HEAD", "OPTIONS"])
+async def probe_chat_completions(_auth=Depends(require_api_key)):
+    """Respond to compatibility probes for the chat completions endpoint."""
     return _probe_response("POST, HEAD, OPTIONS")
 
 
