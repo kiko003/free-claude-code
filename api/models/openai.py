@@ -66,3 +66,22 @@ class ChatCompletionRequest(BaseModel):
     tools: list[OpenAITool] | None = None
     tool_choice: str | OpenAIToolChoice | None = None
     n: int | None = 1
+
+
+class CompletionRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    model: str
+    prompt: str | list[str]
+    max_tokens: int | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    stop: str | list[str] | None = None
+    stream: bool | None = True
+    n: int | None = 1
+    suffix: str | None = None
+    echo: bool | None = None
+    best_of: int | None = None
+    logprobs: int | None = None
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None

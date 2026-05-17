@@ -24,6 +24,7 @@ from api.models.anthropic import (
 )
 from api.models.openai import (
     ChatCompletionRequest,
+    CompletionRequest,
     OpenAIContentPart,
     OpenAIMessage,
     OpenAIToolChoice,
@@ -33,7 +34,9 @@ from core.anthropic import get_token_count, get_user_facing_error_message
 from core.anthropic.openai_sse import (
     OPENAI_SSE_RESPONSE_HEADERS,
     build_openai_non_stream_response,
+    build_text_completion_non_stream_response,
     convert_anthropic_sse_to_openai_stream,
+    convert_anthropic_sse_to_text_completion_stream,
 )
 from core.trace import trace_event, traced_async_stream
 from providers.base import BaseProvider
@@ -116,9 +119,7 @@ def _convert_openai_message(msg: OpenAIMessage) -> Message:
                 if part.type == "text" and part.text:
                     blocks.append(ContentBlockText(type="text", text=part.text))
             elif isinstance(part, dict) and part.get("type") == "text":
-                blocks.append(
-                    ContentBlockText(type="text", text=part.get("text", ""))
-                )
+                blocks.append(ContentBlockText(type="text", text=part.get("text", "")))
         if not blocks:
             fallback = content if isinstance(content, str) else ""
             blocks.append(ContentBlockText(type="text", text=fallback))
@@ -221,7 +222,11 @@ def _convert_openai_tool_choice(req: ChatCompletionRequest) -> dict[str, Any] | 
         if req.tool_choice == "required":
             return {"type": "any"}
         return None
-    if isinstance(req.tool_choice, OpenAIToolChoice) and req.tool_choice.type == "function" and req.tool_choice.function:
+    if (
+        isinstance(req.tool_choice, OpenAIToolChoice)
+        and req.tool_choice.type == "function"
+        and req.tool_choice.function
+    ):
         return {"type": "tool", "name": req.tool_choice.function.get("name", "")}
     return None
 
@@ -299,6 +304,28 @@ def openai_to_messages_request(
     }
 
     return MessagesRequest(**kwargs)
+
+
+def completion_to_messages_request(
+    req: CompletionRequest,
+    resolved_model: str,
+) -> MessagesRequest:
+    """Convert a legacy CompletionRequest to an internal MessagesRequest."""
+    prompt_text = "\n".join(req.prompt) if isinstance(req.prompt, list) else req.prompt
+
+    stop_sequences: list[str] | None = None
+    if req.stop:
+        stop_sequences = [req.stop] if isinstance(req.stop, str) else req.stop
+
+    return MessagesRequest(
+        model=resolved_model,
+        messages=[Message(role="user", content=prompt_text)],
+        max_tokens=req.max_tokens,
+        temperature=req.temperature,
+        top_p=req.top_p,
+        stop_sequences=stop_sequences,
+        stream=True,
+    )
 
 
 class OpenAIProxyService:
@@ -408,6 +435,146 @@ class OpenAIProxyService:
                 status_code=_http_status_for_unexpected_service_exception(e),
                 detail=get_user_facing_error_message(e),
             ) from e
+
+    async def create_completion(
+        self, request_data: CompletionRequest
+    ) -> StreamingResponse | dict[str, Any]:
+        """Handle a legacy OpenAI /v1/completions request."""
+        try:
+            prompt_text = (
+                "\n".join(request_data.prompt)
+                if isinstance(request_data.prompt, list)
+                else request_data.prompt
+            )
+            if not prompt_text:
+                raise InvalidRequestError("prompt cannot be empty")
+
+            resolved = self._model_router.resolve(request_data.model)
+            internal_request = completion_to_messages_request(
+                request_data, resolved.provider_model
+            )
+
+            provider = self._provider_getter(resolved.provider_id)
+            provider.preflight_stream(
+                internal_request,
+                thinking_enabled=resolved.thinking_enabled,
+            )
+
+            trace_event(
+                stage="routing",
+                event="api.route.resolved",
+                source="api",
+                provider_id=resolved.provider_id,
+                provider_model=resolved.provider_model,
+                provider_model_ref=resolved.provider_model_ref,
+                gateway_model=request_data.model,
+                thinking_enabled=resolved.thinking_enabled,
+            )
+
+            request_id = f"req_{uuid.uuid4().hex[:12]}"
+            with logger.contextualize(request_id=request_id):
+                trace_event(
+                    stage="ingress",
+                    event="api.request.received",
+                    source="api",
+                    kind="completions",
+                )
+
+                input_tokens = self._token_counter(
+                    internal_request.messages,
+                    internal_request.system,
+                    internal_request.tools,
+                )
+
+                anthropic_stream = traced_async_stream(
+                    provider.stream_response(
+                        internal_request,
+                        input_tokens=input_tokens,
+                        request_id=request_id,
+                        thinking_enabled=resolved.thinking_enabled,
+                    ),
+                    stage="egress",
+                    source="api",
+                    complete_event="api.response.stream_completed",
+                    interrupted_event="api.response.stream_interrupted",
+                    chunk_event=None,
+                    extra={
+                        "request_id": request_id,
+                        "provider_id": resolved.provider_id,
+                        "gateway_model": request_data.model,
+                    },
+                )
+
+                text_completion_stream = (
+                    convert_anthropic_sse_to_text_completion_stream(
+                        anthropic_stream,
+                        resolved.provider_model,
+                        request_id=request_id,
+                    )
+                )
+
+                if request_data.stream is False:
+                    return await self._collect_completion_non_stream(
+                        text_completion_stream, resolved, input_tokens, request_id
+                    )
+
+                return StreamingResponse(
+                    text_completion_stream,
+                    media_type="text/event-stream",
+                    headers=OPENAI_SSE_RESPONSE_HEADERS,
+                )
+
+        except ProviderError:
+            raise
+        except Exception as e:
+            _log_unexpected_service_exception(
+                self._settings, e, context="CREATE_COMPLETION_ERROR"
+            )
+            raise HTTPException(
+                status_code=_http_status_for_unexpected_service_exception(e),
+                detail=get_user_facing_error_message(e),
+            ) from e
+
+    async def _collect_completion_non_stream(
+        self,
+        text_completion_stream: AsyncIterator[str],
+        resolved: Any,
+        input_tokens: int,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Collect text completion streaming chunks into a single non-streaming response."""
+        text_parts: list[str] = []
+        finish_reason: str | None = None
+        completion_id: str = ""
+
+        async for chunk in text_completion_stream:
+            if chunk.startswith("data: "):
+                payload = chunk[6:].strip()
+                if payload == "[DONE]":
+                    continue
+                try:
+                    data = json.loads(payload)
+                except json.JSONDecodeError, ValueError:
+                    continue
+                if not completion_id:
+                    completion_id = data.get("id", "")
+                choices = data.get("choices", [])
+                if choices:
+                    text = choices[0].get("text", "")
+                    if text:
+                        text_parts.append(text)
+                    fr = choices[0].get("finish_reason")
+                    if fr:
+                        finish_reason = fr
+
+        return build_text_completion_non_stream_response(
+            completion_id=completion_id or request_id,
+            model=resolved.provider_model,
+            text="".join(text_parts) or None,
+            finish_reason=finish_reason,
+            prompt_tokens=input_tokens,
+            completion_tokens=len(text_parts),
+        )
 
     async def _collect_non_stream(
         self,

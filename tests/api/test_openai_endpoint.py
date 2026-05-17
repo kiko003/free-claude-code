@@ -317,3 +317,151 @@ def test_generic_exception_returns_500(client: TestClient):
     )
     assert response.status_code == 500
     mock_provider.stream_response = _mock_stream_response
+
+
+# =============================================================================
+# Legacy /v1/completions tests
+# =============================================================================
+
+
+def _completion_payload(**kwargs) -> dict:
+    base = {
+        "model": "nvidia_nim/test-model",
+        "prompt": "Hello",
+    }
+    base.update(kwargs)
+    return base
+
+
+def test_completion_streaming_returns_200(client: TestClient):
+    response = client.post(
+        "/v1/completions",
+        json=_completion_payload(stream=True),
+    )
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers.get("content-type", "")
+
+
+def test_completion_streaming_returns_text_completion_object(client: TestClient):
+    response = client.post(
+        "/v1/completions",
+        json=_completion_payload(stream=True),
+    )
+    assert response.status_code == 200
+    content = b"".join(response.iter_bytes())
+    text = content.decode("utf-8")
+    assert "data: " in text
+    assert "[DONE]" in text
+    assert "text_completion" in text
+    assert "chat.completion.chunk" not in text
+
+
+def test_completion_streaming_contains_content(client: TestClient):
+    response = client.post(
+        "/v1/completions",
+        json=_completion_payload(stream=True),
+    )
+    assert response.status_code == 200
+    content = b"".join(response.iter_bytes())
+    text = content.decode("utf-8")
+    assert "Hello" in text
+
+
+def test_completion_non_streaming_returns_200_json(client: TestClient):
+    response = client.post(
+        "/v1/completions",
+        json=_completion_payload(stream=False),
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["object"] == "text_completion"
+    assert "choices" in data
+    assert len(data["choices"]) == 1
+
+
+def test_completion_non_streaming_response_structure(client: TestClient):
+    response = client.post(
+        "/v1/completions",
+        json=_completion_payload(stream=False),
+    )
+    data = response.json()
+    assert "id" in data
+    assert "model" in data
+    assert "usage" in data
+    assert "prompt_tokens" in data["usage"]
+    assert "completion_tokens" in data["usage"]
+    assert "total_tokens" in data["usage"]
+    choice = data["choices"][0]
+    assert "text" in choice
+    assert "finish_reason" in choice
+    assert "logprobs" in choice
+    assert choice["logprobs"] is None
+
+
+def test_completion_non_streaming_contains_content(client: TestClient):
+    response = client.post(
+        "/v1/completions",
+        json=_completion_payload(stream=False),
+    )
+    data = response.json()
+    text = data["choices"][0]["text"]
+    assert "Hello" in text
+
+
+def test_completion_list_prompt(client: TestClient):
+    """list[str] prompt should be joined and sent correctly."""
+    response = client.post(
+        "/v1/completions",
+        json=_completion_payload(prompt=["Hello", "World"], stream=False),
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["object"] == "text_completion"
+
+
+def test_completion_head_probe_returns_204(client: TestClient):
+    response = client.head("/v1/completions")
+    assert response.status_code == 204
+    assert "Allow" in response.headers
+
+
+def test_completion_options_probe_returns_204(client: TestClient):
+    response = client.options("/v1/completions")
+    assert response.status_code == 204
+    assert "Allow" in response.headers
+
+
+def test_completion_empty_prompt_returns_error(client: TestClient):
+    response = client.post(
+        "/v1/completions",
+        json={"model": "test", "prompt": ""},
+    )
+    assert response.status_code == 400
+
+
+def test_completion_provider_error_returns_status(client: TestClient):
+    from providers.exceptions import RateLimitError
+
+    def _raise_rate_limit(*args, **kwargs):
+        raise RateLimitError("Too Many Requests")
+
+    mock_provider.stream_response = _raise_rate_limit
+    response = client.post(
+        "/v1/completions",
+        json=_completion_payload(stream=False),
+    )
+    assert response.status_code == 429
+    mock_provider.stream_response = _mock_stream_response
+
+
+def test_completion_generic_exception_returns_500(client: TestClient):
+    def _raise_runtime(*args, **kwargs):
+        raise RuntimeError("unexpected crash")
+
+    mock_provider.stream_response = _raise_runtime
+    response = client.post(
+        "/v1/completions",
+        json=_completion_payload(stream=False),
+    )
+    assert response.status_code == 500
+    mock_provider.stream_response = _mock_stream_response

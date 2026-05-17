@@ -13,7 +13,7 @@ from . import dependencies
 from .dependencies import get_settings, require_api_key
 from .gateway_model_ids import gateway_model_id, no_thinking_gateway_model_id
 from .models.anthropic import MessagesRequest, TokenCountRequest
-from .models.openai import ChatCompletionRequest
+from .models.openai import ChatCompletionRequest, CompletionRequest
 from .models.responses import ModelResponse, ModelsListResponse
 from .openai_service import OpenAIProxyService
 from .services import ClaudeProxyService
@@ -224,6 +224,22 @@ async def create_chat_completion(
 @router.api_route("/v1/chat/completions", methods=["HEAD", "OPTIONS"])
 async def probe_chat_completions(_auth=Depends(require_api_key)):
     """Respond to compatibility probes for the chat completions endpoint."""
+    return _probe_response("POST, HEAD, OPTIONS")
+
+
+@router.post("/v1/completions")
+async def create_completion(
+    request_data: CompletionRequest,
+    service: OpenAIProxyService = Depends(get_openai_service),
+    _auth=Depends(require_api_key),
+):
+    """Create a completion (legacy OpenAI-compatible)."""
+    return await service.create_completion(request_data)
+
+
+@router.api_route("/v1/completions", methods=["HEAD", "OPTIONS"])
+async def probe_completions(_auth=Depends(require_api_key)):
+    """Respond to compatibility probes for the completions endpoint."""
     return _probe_response("POST, HEAD, OPTIONS")
 
 

@@ -44,6 +44,7 @@ Free Claude Code routes Anthropic Messages API traffic from Claude Code to NVIDI
 - Optional Discord or Telegram bot wrapper for remote coding sessions.
 - Optional Usage through the VSCode extension.
 - Optional voice-note transcription through local Whisper or NVIDIA NIM.
+- OpenAI-compatible endpoints: `/v1/chat/completions` (modern) and `/v1/completions` (legacy) for clients that only speak OpenAI's protocol (LiteLLM, Continue.dev, Cursor, etc.).
 - OpenRouter multi-key rotation: comma-separated API keys with automatic load-balancing, per-key daily quota tracking, and graduated rate-limit backoff.
 - Local **Admin UI** at `/admin` to edit supported proxy settings, validate changes, and check providers (loopback access only).
 
@@ -492,7 +493,7 @@ Diagram source: [`assets/how-it-works.mmd`](assets/how-it-works.mmd).
 
 Important pieces:
 
-- FastAPI exposes Anthropic-compatible routes such as `/v1/messages`, `/v1/messages/count_tokens`, and `/v1/models`.
+- FastAPI exposes Anthropic-compatible routes (`/v1/messages`, `/v1/messages/count_tokens`, `/v1/models`) and OpenAI-compatible routes (`/v1/chat/completions`, `/v1/completions`).
 - Model routing resolves the Claude model name to `MODEL_OPUS`, `MODEL_SONNET`, `MODEL_HAIKU`, or `MODEL`.
 - NIM, OpenCode Zen, Z.ai use OpenAI chat streaming translated into Anthropic SSE.
 - Wafer, OpenRouter, DeepSeek, LM Studio, llama.cpp, and Ollama use Anthropic Messages style transports.

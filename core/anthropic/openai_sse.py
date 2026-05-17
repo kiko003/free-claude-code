@@ -97,6 +97,161 @@ def build_openai_non_stream_response(
     }
 
 
+def build_text_completion_stream_chunk(
+    *,
+    completion_id: str,
+    model: str,
+    text: str | None = None,
+    finish_reason: str | None = None,
+) -> str:
+    """Build one legacy text completion streaming SSE chunk."""
+    choice: dict[str, Any] = {
+        "text": text if text is not None else "",
+        "index": 0,
+        "logprobs": None,
+        "finish_reason": finish_reason,
+    }
+
+    data = {
+        "id": completion_id,
+        "object": "text_completion",
+        "model": model,
+        "choices": [choice],
+    }
+    return f"data: {json.dumps(data)}\n\n"
+
+
+def build_text_completion_non_stream_response(
+    *,
+    completion_id: str,
+    model: str,
+    text: str | None = None,
+    finish_reason: str | None = None,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+) -> dict[str, Any]:
+    """Build a complete legacy text completion non-streaming response."""
+    return {
+        "id": completion_id,
+        "object": "text_completion",
+        "model": model,
+        "choices": [
+            {
+                "text": text or "",
+                "index": 0,
+                "logprobs": None,
+                "finish_reason": finish_reason or "stop",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        },
+    }
+
+
+def convert_anthropic_sse_to_text_completion_stream(
+    anthropic_stream: AsyncIterator[str],
+    model: str,
+    *,
+    request_id: str | None = None,
+) -> AsyncIterator[str]:
+    """Convert an Anthropic SSE stream to a legacy text completion SSE stream."""
+    return _TextCompletionStreamConverter(
+        anthropic_stream, model, request_id=request_id
+    ).run()
+
+
+class _TextCompletionStreamConverter:
+    """Stateful converter from Anthropic SSE events to legacy text completion SSE chunks."""
+
+    def __init__(
+        self,
+        anthropic_stream: AsyncIterator[str],
+        model: str,
+        *,
+        request_id: str | None = None,
+    ):
+        self._source = anthropic_stream
+        self._model = model
+        self._completion_id = request_id or f"cmpl-{uuid.uuid4().hex[:24]}"
+        self._text_buffer: list[str] = []
+        self._stop_reason: str | None = None
+        self._input_tokens: int = 0
+        self._output_tokens: int = 0
+        self._started: bool = False
+        self._stream_done: bool = False
+
+    async def run(self) -> AsyncIterator[str]:
+        async for chunk in self._source:
+            parsed = _parse_anthropic_sse_event(chunk)
+            if parsed is None:
+                continue
+            event_type, data = parsed
+
+            if event_type == "message_start":
+                msg = data.get("message", {})
+                self._completion_id = msg.get("id", self._completion_id)
+                usage = msg.get("usage", {})
+                self._input_tokens = usage.get("input_tokens", 0)
+                if not self._started:
+                    self._started = True
+                    yield build_text_completion_stream_chunk(
+                        completion_id=self._completion_id,
+                        model=self._model,
+                    )
+
+            elif event_type == "content_block_delta":
+                delta = data.get("delta", {})
+                delta_type = delta.get("type")
+                if delta_type == "text_delta":
+                    text = delta.get("text", "")
+                    if text:
+                        self._text_buffer.append(text)
+                        yield build_text_completion_stream_chunk(
+                            completion_id=self._completion_id,
+                            model=self._model,
+                            text=text,
+                        )
+
+            elif event_type == "message_delta":
+                delta = data.get("delta", {})
+                self._stop_reason = delta.get("stop_reason")
+                usage = data.get("usage", {})
+                if usage:
+                    self._output_tokens = usage.get("output_tokens", 0)
+
+            elif event_type == "message_stop":
+                self._stream_done = True
+                yield build_text_completion_stream_chunk(
+                    completion_id=self._completion_id,
+                    model=self._model,
+                    finish_reason=_map_stop_reason(self._stop_reason),
+                )
+                yield build_openai_stream_done()
+
+            elif event_type == "error":
+                error_info = data.get("error", {})
+                error_msg = error_info.get("message", "Unknown error")
+                self._stream_done = True
+                yield build_text_completion_stream_chunk(
+                    completion_id=self._completion_id,
+                    model=self._model,
+                    text=f"\n[Error: {error_msg}]",
+                    finish_reason="stop",
+                )
+                yield build_openai_stream_done()
+
+        if not self._stream_done:
+            yield build_text_completion_stream_chunk(
+                completion_id=self._completion_id,
+                model=self._model,
+                finish_reason=_map_stop_reason(self._stop_reason),
+            )
+            yield build_openai_stream_done()
+
+
 def _parse_anthropic_sse_event(chunk: str) -> tuple[str, dict[str, Any]] | None:
     """Parse an Anthropic SSE chunk into (event_type, data) or None if not a data event."""
     event_type = "message"
