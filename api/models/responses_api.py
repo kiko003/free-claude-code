@@ -1,13 +1,14 @@
 """Pydantic models for OpenAI Responses API /v1/responses requests."""
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Discriminator
 
 
 class EasyInputMessage(BaseModel):
     """Simple message input item — {role, content}."""
 
+    type: Literal["message"] = "message"
     role: Literal["user", "assistant", "system", "developer"]
     content: str | list[dict[str, Any]]
 
@@ -29,7 +30,10 @@ class FunctionCallOutput(BaseModel):
     output: str
 
 
-InputItem = EasyInputMessage | FunctionCall | FunctionCallOutput
+InputItem = Annotated[
+    EasyInputMessage | FunctionCall | FunctionCallOutput,
+    Discriminator("type"),
+]
 
 
 class ResponsesFunctionTool(BaseModel):
@@ -53,6 +57,6 @@ class ResponsesRequest(BaseModel):
     temperature: float | None = None
     top_p: float | None = None
     max_output_tokens: int | None = None
-    stream: bool = False
+    stream: bool | None = False
     metadata: dict[str, str] | None = None
     previous_response_id: str | None = None

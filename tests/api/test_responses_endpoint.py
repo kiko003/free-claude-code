@@ -20,7 +20,7 @@ class TestResponsesRequestParsing:
     def test_parse_list_input_with_easy_message(self):
         req = ResponsesRequest(
             model="test",
-            input=[{"role": "user", "content": "Hello"}],
+            input=[{"type": "message", "role": "user", "content": "Hello"}],
         )
         assert len(req.input) == 1
         item = req.input[0]
