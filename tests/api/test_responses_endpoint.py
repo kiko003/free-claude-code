@@ -1,6 +1,6 @@
 """Tests for the /v1/responses endpoint."""
 
-from api.models.responses_api import (
+from api.models import (
     EasyInputMessage,
     FunctionCall,
     FunctionCallOutput,
