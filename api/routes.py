@@ -15,7 +15,9 @@ from .gateway_model_ids import gateway_model_id, no_thinking_gateway_model_id
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.openai import ChatCompletionRequest, CompletionRequest
 from .models.responses import ModelResponse, ModelsListResponse
+from .models.responses_api import ResponsesRequest
 from .openai_service import OpenAIProxyService
+from .responses_service import ResponsesProxyService
 from .services import ClaudeProxyService
 
 router = APIRouter()
@@ -240,6 +242,35 @@ async def create_completion(
 @router.api_route("/v1/completions", methods=["HEAD", "OPTIONS"])
 async def probe_completions(_auth=Depends(require_api_key)):
     """Respond to compatibility probes for the completions endpoint."""
+    return _probe_response("POST, HEAD, OPTIONS")
+
+
+def get_responses_service(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> ResponsesProxyService:
+    """Build the Responses API service for route handlers."""
+    return ResponsesProxyService(
+        settings,
+        provider_getter=lambda provider_type: dependencies.resolve_provider(
+            provider_type, app=request.app, settings=settings
+        ),
+    )
+
+
+@router.post("/v1/responses")
+async def create_response(
+    request_data: ResponsesRequest,
+    service: ResponsesProxyService = Depends(get_responses_service),
+    _auth=Depends(require_api_key),
+):
+    """Create a response (OpenAI Responses API-compatible)."""
+    return await service.create_response(request_data)
+
+
+@router.api_route("/v1/responses", methods=["HEAD", "OPTIONS"])
+async def probe_responses(_auth=Depends(require_api_key)):
+    """Respond to compatibility probes for the responses endpoint."""
     return _probe_response("POST, HEAD, OPTIONS")
 
 
