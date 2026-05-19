@@ -57,14 +57,11 @@ def _convert_input_item_to_messages(
         if isinstance(content, str):
             messages.append(Message(role=role, content=content))
         elif isinstance(content, list):
-            blocks: list[Any] = []
-            for part in content:
-                if isinstance(part, dict) and part.get("type") == "text":
-                    blocks.append(ContentBlockText(type="text", text=part.get("text", "")))
-                elif isinstance(part, dict) and part.get("type") == "input_text":
-                    blocks.append(ContentBlockText(type="text", text=part.get("text", "")))
-            if not blocks:
-                blocks.append(ContentBlockText(type="text", text=""))
+            blocks: list[Any] = [
+                ContentBlockText(type="text", text=part.get("text", ""))
+                for part in content
+                if isinstance(part, dict) and part.get("type") in ("text", "input_text")
+            ] or [ContentBlockText(type="text", text="")]
             messages.append(Message(role=role, content=blocks))
     elif isinstance(item, FunctionCall):
         try:
@@ -115,9 +112,8 @@ def _convert_responses_tool_choice(
         if tool_choice == "required":
             return {"type": "any"}
         return None
-    if isinstance(tool_choice, dict):
-        if tool_choice.get("type") == "function" and "name" in tool_choice:
-            return {"type": "tool", "name": tool_choice["name"]}
+    if isinstance(tool_choice, dict) and tool_choice.get("type") == "function" and "name" in tool_choice:
+        return {"type": "tool", "name": tool_choice["name"]}
     return None
 
 

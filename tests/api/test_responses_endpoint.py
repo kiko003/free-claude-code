@@ -1,5 +1,9 @@
 """Tests for the /v1/responses endpoint."""
 
+import json
+
+import pytest
+
 from api.models import (
     EasyInputMessage,
     FunctionCall,
@@ -7,8 +11,14 @@ from api.models import (
     ResponsesFunctionTool,
     ResponsesRequest,
 )
-from api.models.anthropic import ContentBlockToolResult, ContentBlockToolUse, ContentBlockText, Message, MessagesRequest
+from api.models.anthropic import (
+    ContentBlockToolResult,
+    ContentBlockToolUse,
+)
 from api.responses_service import responses_to_messages_request
+from core.anthropic.responses_sse import (
+    convert_anthropic_sse_to_responses_stream,
+)
 
 
 class TestResponsesRequestParsing:
@@ -266,3 +276,127 @@ class TestResponsesToAnthropicConversion:
         assert result.messages[2].role == "user"
         assert isinstance(result.messages[1].content[0], ContentBlockToolUse)
         assert isinstance(result.messages[2].content[0], ContentBlockToolResult)
+
+
+class TestResponsesSSEConversion:
+    """Verify Anthropic SSE events convert to Responses API streaming events."""
+
+    @pytest.mark.asyncio
+    async def test_text_response_stream(self):
+        """Full text-only Anthropic SSE stream -> Responses API events."""
+        anthropic_chunks = [
+            (
+                "event: message_start\n"
+                'data: {"type": "message_start", "message": {"id": "msg_test123", "type": "message", '
+                '"role": "assistant", "content": [], "model": "test-model", "stop_reason": null, '
+                '"stop_sequence": null, "usage": {"input_tokens": 5, "output_tokens": 1}}}\n\n'
+            ),
+            (
+                "event: content_block_start\n"
+                'data: {"type": "content_block_start", "index": 0, '
+                '"content_block": {"type": "text", "text": ""}}\n\n'
+            ),
+            (
+                "event: content_block_delta\n"
+                'data: {"type": "content_block_delta", "index": 0, '
+                '"delta": {"type": "text_delta", "text": "Hello"}}\n\n'
+            ),
+            (
+                "event: content_block_delta\n"
+                'data: {"type": "content_block_delta", "index": 0, '
+                '"delta": {"type": "text_delta", "text": " world"}}\n\n'
+            ),
+            (
+                "event: content_block_stop\n"
+                'data: {"type": "content_block_stop", "index": 0}\n\n'
+            ),
+            (
+                "event: message_delta\n"
+                'data: {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": null}, '
+                '"usage": {"input_tokens": 5, "output_tokens": 10}}\n\n'
+            ),
+            'event: message_stop\ndata: {"type": "message_stop"}\n\n',
+        ]
+
+        async def source():
+            for chunk in anthropic_chunks:
+                yield chunk
+
+        events = []
+        async for chunk in convert_anthropic_sse_to_responses_stream(
+            source(), "test-model", request_id="resp_test123"
+        ):
+            for line in chunk.splitlines():
+                if line.startswith("data: "):
+                    payload = line[6:].strip()
+                    if payload and payload != "[DONE]":
+                        events.append(json.loads(payload))
+
+        event_types = [e.get("type") for e in events]
+        assert "response.created" in event_types
+        assert "response.in_progress" in event_types
+        assert "response.output_item.added" in event_types
+        assert "response.content_part.added" in event_types
+        assert "response.output_text.delta" in event_types
+        assert "response.output_text.done" in event_types
+        assert "response.content_part.done" in event_types
+        assert "response.output_item.done" in event_types
+        assert "response.completed" in event_types
+
+    @pytest.mark.asyncio
+    async def test_tool_use_response_stream(self):
+        """Anthropic tool_use SSE -> Responses API function_call events."""
+        anthropic_chunks = [
+            (
+                "event: message_start\n"
+                'data: {"type": "message_start", "message": {"id": "msg_tool123", "type": "message", '
+                '"role": "assistant", "content": [], "model": "test-model", "stop_reason": null, '
+                '"stop_sequence": null, "usage": {"input_tokens": 10, "output_tokens": 1}}}\n\n'
+            ),
+            (
+                "event: content_block_start\n"
+                'data: {"type": "content_block_start", "index": 0, '
+                '"content_block": {"type": "tool_use", "id": "toolu_abc123", '
+                '"name": "get_weather", "input": {}}}\n\n'
+            ),
+            (
+                "event: content_block_delta\n"
+                'data: {"type": "content_block_delta", "index": 0, '
+                '"delta": {"type": "input_json_delta", "partial_json": "{\\\"city\\\": \\\"NYC\\\"}"}}\n\n'
+            ),
+            (
+                "event: content_block_stop\n"
+                'data: {"type": "content_block_stop", "index": 0}\n\n'
+            ),
+            (
+                "event: message_delta\n"
+                'data: {"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": null}, '
+                '"usage": {"input_tokens": 10, "output_tokens": 20}}\n\n'
+            ),
+            'event: message_stop\ndata: {"type": "message_stop"}\n\n',
+        ]
+
+        async def source():
+            for chunk in anthropic_chunks:
+                yield chunk
+
+        events = []
+        async for chunk in convert_anthropic_sse_to_responses_stream(
+            source(), "test-model", request_id="resp_tool123"
+        ):
+            for line in chunk.splitlines():
+                if line.startswith("data: "):
+                    payload = line[6:].strip()
+                    if payload and payload != "[DONE]":
+                        events.append(json.loads(payload))
+
+        event_types = [e.get("type") for e in events]
+        assert "response.output_item.added" in event_types
+        assert "response.function_call_arguments.delta" in event_types
+        assert "response.function_call_arguments.done" in event_types
+        assert "response.completed" in event_types
+
+        # Check completed response has function_call in output
+        completed = next(e for e in events if e.get("type") == "response.completed")
+        resp = completed.get("response", {})
+        assert resp.get("status") == "completed"
