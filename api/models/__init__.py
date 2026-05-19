@@ -22,6 +22,13 @@ from .responses import (
     TokenCountResponse,
     Usage,
 )
+from .responses_api import (
+    EasyInputMessage,
+    FunctionCall,
+    FunctionCallOutput,
+    ResponsesFunctionTool,
+    ResponsesRequest,
+)
 
 __all__ = [
     "ContentBlockImage",
@@ -30,11 +37,16 @@ __all__ = [
     "ContentBlockThinking",
     "ContentBlockToolResult",
     "ContentBlockToolUse",
+    "EasyInputMessage",
+    "FunctionCall",
+    "FunctionCallOutput",
     "Message",
     "MessagesRequest",
     "MessagesResponse",
     "ModelResponse",
     "ModelsListResponse",
+    "ResponsesFunctionTool",
+    "ResponsesRequest",
     "Role",
     "SystemContent",
     "ThinkingConfig",
