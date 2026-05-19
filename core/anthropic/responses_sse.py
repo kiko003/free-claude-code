@@ -1,7 +1,6 @@
 """Responses API SSE builder and Anthropic-to-Responses SSE converter."""
 
 from collections.abc import AsyncIterator
-from typing import Any
 
 RESPONSES_SSE_RESPONSE_HEADERS: dict[str, str] = {
     "X-Accel-Buffering": "no",
